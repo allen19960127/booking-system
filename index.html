@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>謎失工作室 排程同步系統 (美化版)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;500;700&display=swap" rel="stylesheet">
+<style>
+  /* 樣式碼保持不變 */
+  body { font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif; background-color: #f0f4f8; color: #2c3e50; padding: 20px; margin: 0; line-height: 1.6; }
+  h1 { text-align: center; margin: 20px 0 10px 0; font-size: 2.2em; color: #34495e; font-weight: 700; }
+  #auth-container { text-align: center; margin-bottom: 25px; padding: 15px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05); }
+  #user-status { margin: 5px 0 15px 0; font-size: 1.1em; color: #2980b9; font-weight: 500; }
+  #status-message { text-align: center; margin-bottom: 20px; font-weight: bold; padding: 12px; border-radius: 8px; transition: background-color 0.3s; color: white; }
+  .container { display: flex; flex-wrap: wrap; justify-content: center; gap: 25px; }
+  .theme { background-color: #ffffff; padding: 20px; border-radius: 12px; width: 100%; max-width: 650px; box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1); transition: transform 0.3s; border-top: 5px solid #3498db; }
+  .theme h2 { text-align: center; background-color: #ecf0f1; padding: 12px; border-radius: 8px; margin: 0 0 20px 0; font-size: 1.5em; color: #34495e; }
+  .slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 8px; }
+  .slot { padding: 10px 5px; text-align: center; border-radius: 6px; font-weight: 500; font-size: 0.9em; transition: all 0.15s; user-select: none; border: 1px solid transparent; line-height: 1.2; }
+  .available { background-color: #2ecc71; color: white; cursor: pointer; border-color: #27ae60; }
+  .available:hover { background-color: #27ae60; transform: translateY(-1px); }
+  .booked { background-color: #e74c3c; color: white; cursor: pointer; border-color: #c0392b; }
+  .booked:hover { background-color: #c0392b; transform: translateY(-1px); }
+  .blocked { background-color: #bdc3c7; color: #7f8c8d; cursor: not-allowed; opacity: 0.8; font-size: 0.8em; border-color: #95a5a6; }
+  .lobby-clash { background-color: #9b59b6; color: white; border-color: #8e44ad; cursor: not-allowed; }
+  .external-booked { background-color: #f39c12; color: white; cursor: not-allowed; font-weight: 700; border-color: #e67e22; }
+  .available-slots-area { margin-top: 25px; padding: 15px 0; border-top: 1px solid #ecf0f1; display: flex; flex-direction: column; align-items: flex-start; background-color: #f8f9fa; padding: 15px; border-radius: 8px; }
+  .available-slots-area strong { display: block; margin-bottom: 8px; color: #e67e22; font-weight: 700; }
+  .slot-text-container { width: 100%; margin-bottom: 10px; }
+  .copy-button { background-color: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 0.9em; transition: background 0.2s, transform 0.1s; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
+  .copy-button:hover { background-color: #2980b9; transform: translateY(-1px); }
+  #controls { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 10px; z-index: 999; }
+  #controls button { border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); transition: background 0.2s, transform 0.1s; }
+  #clear { background-color: #e74c3c; color: white; }
+  #clear:hover { background-color: #c0392b; transform: translateY(-1px); }
+  #refresh { background-color: #3498db; color: white; }
+  #refresh:hover { background-color: #2980b9; transform: translateY(-1px); }
+  .legend { text-align: center; margin-bottom: 25px; font-size: 0.9em; display: flex; justify-content: center; gap: 20px; color: #555; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; border: 1px solid rgba(0, 0, 0, 0.1); }
+</style>
+</head>
+<body>
+<h1>謎失工作室 排程同步系統</h1>
+
+<div id="auth-container">
+    <p id="user-status">載入中，請稍候...</p>
+    <div id="google-signin-button"></div> 
+</div>
+<div id="status-message" style="background-color: #bdc3c7; color: white;">載入中...</div>
+
+<div class="legend">
+  <div><span class="dot" style="background-color:#2ecc71"></span>可預約</div>
+  <div><span class="dot" style="background-color:#e74c3c"></span>手動預約</div>
+  <div><span class="dot" style="background-color:#f39c12"></span>日曆預約</div>
+  <div><span class="dot" style="background-color:#bdc3c7"></span>時窗佔用</div>
+  <div><span class="dot" style="background-color:#9b59b6"></span>同館衝突</div>
+</div>
+
+<div class="container">
+  <div class="theme"><h2>301號房 (90分, 總時窗90分)</h2><div class="slots" id="s1"></div>
+    <div id="remaining-301號房" class="available-slots-area"></div>
+  </div>
+  <div class="theme"><h2>失物招領 (90分, 總時窗90分)</h2><div class="slots" id="s2"></div>
+    <div id="remaining-失物招領" class="available-slots-area"></div>
+  </div>
+  <div class="theme"><h2>藝樣的代價 (150分, 總時窗150分)</h2><div class="slots" id="s3"></div>
+    <div id="remaining-藝樣的代價" class="available-slots-area"></div>
+  </div>
+  <div class="theme"><h2>朱砂 (150分, 總時窗150分) </h2><div class="slots" id="s4"></div>
+    <div id="remaining-朱砂" class="available-slots-area"></div>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="refresh" onclick="location.reload()">重新整理</button>
+  <button id="clear" onclick="clearAll()">清空重置 (登出)</button>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script> 
+
+<script>
+// =================================================================
+// 🚨 設定區 - 請替換以下兩個參數 🚨
+// =================================================================
+const CLIENT_ID = '668108664338-d1fa84nmbpq0leo5tavf9n0cahg2g1ge.apps.googleusercontent.com'; 
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyEmwsxlnr7Xy7yduekMsNhSJrnNNMWygwh8Rqaw81hQbmJUFkhedRR2Xp4gu2Lip59/exec';
+const SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+
+// 核心配置 (保持不變)
+const CONFIG = {
+  "301號房":      { dur: 90,  group: "館A", interval: 15, block_before: 45, block_after: 45, id: "s1" },
+  "失物招領":    { dur: 90,  group: "館A", interval: 15, block_before: 45, block_after: 45, id: "s2" },
+  "藝樣的代價":  { dur: 150, group: "館B", interval: 30, block_before: 75, block_after: 75, id: "s3" }, 
+  "朱砂":        { dur: 150, group: "館B", interval: 30, block_before: 75, block_after: 75, id: "s4" }  
+};
+// =================================================================
+let localStorageKey = "mishi2025_v14";
+let localBookings = JSON.parse(localStorage.getItem(localStorageKey) || '{}');
+Object.keys(CONFIG).forEach(k => { if(!localBookings[k]) localBookings[k] = []; });
+
+let combinedBookings = JSON.parse(JSON.stringify(localBookings));
+let externalBookings = {};
+
+const tm = t => parseInt(t.split(":")[0]) * 60 + parseInt(t.split(":")[1]);
+const valToStr = v => `${String(Math.floor(v/60)).padStart(2,'0')}:${String(v%60).padStart(2,'0')}`;
+
+function generateTimes(interval) {
+  let res = [];
+  for(let t=630; t<=1260; t+=interval) res.push(valToStr(t)); // 10:30-21:00
+  return res;
+}
+
+// --- Google 登入邏輯 (Redirect Mode) ---
+let gisInited = false;
+
+function gisInit() {
+    const userStatusEl = document.getElementById('user-status');
+    const signInButtonEl = document.getElementById('google-signin-button');
+
+    // 1. 檢查網址列是否包含 Google 導回的 Token
+    const urlParams = new URLSearchParams(window.location.hash.substring(1));
+    const accessToken = urlParams.get('access_token');
+
+    if (accessToken) {
+        // 登入成功，儲存 Token 並清理網址列
+        sessionStorage.setItem('google_access_token', accessToken);
+        history.replaceState(null, null, window.location.pathname); 
+    }
+
+    // 2. 檢查是否有 Token
+    if (sessionStorage.getItem('google_access_token')) {
+        userStatusEl.innerHTML = '✅ 已登入 Google，正在同步日曆...';
+        signInButtonEl.style.display = 'none';
+        render(true);
+        return;
+    }
+
+    // 3. 初始化 Google 重新導向登入設定
+    window.google.accounts.id.initialize({
+        client_id: CLIENT_ID,
+        callback: null, 
+        flow: 'implicit',
+        ux_mode: 'redirect', 
+        // ***** 修正：使用 window.location.href 確保回導正確性 *****
+        redirect_uri: window.location.href, 
+        scope: SCOPE
+    });
+    
+    // 4. 渲染登入按鈕
+    userStatusEl.innerHTML = '⚠️ 請點擊下方按鈕登入 Google 進行同步。';
+    signInButtonEl.style.display = 'block';
+    
+    window.google.accounts.id.renderButton(
+        signInButtonEl,
+        // ***** 優化：移除 type 和 text，讓 Google 預設渲染 *****
+        { theme: 'outline', size: 'large' }
+    );
+
+    gisInited = true;
+    render(false); 
+}
+// ... [其餘 JS 函式保持不變]
+// ...
+// ... [其餘 JS 函式保持不變]
+// ...
+// ... [其餘 JS 函式保持不變]
+// ...
+
+async function fetchCalendarBookings(gasUrl) {
+    const statusEl = document.getElementById('status-message');
+    const token = sessionStorage.getItem('google_access_token');
+    
+    if (!token) {
+        statusEl.innerHTML = '⚠️ 尚未登入 Google。無法同步日曆。';
+        statusEl.style.backgroundColor = '#f39c12';
+        return {}; 
+    }
+    
+    statusEl.innerHTML = '🔄 正在使用您的憑證向日曆伺服器請求資料...';
+    statusEl.style.backgroundColor = '#3498db';
+
+    try {
+        const fetchUrl = `${gasUrl}?token=${token}`; 
+        const response = await fetch(fetchUrl);
+        
+        if (!response.ok) { 
+          throw new Error(`網路錯誤 ${response.status} (${response.statusText})`); 
+        }
+        
+        const calendarEvents = await response.json();
+        
+        // 檢查 GAS 返回的自訂錯誤
+        if (calendarEvents.error) {
+            if (calendarEvents.error === "TOKEN_INVALID" || calendarEvents.error === "API_ERROR") {
+                document.getElementById('user-status').innerHTML = '❌ 登入憑證無效或過期，請點擊「清空重置」！';
+                sessionStorage.removeItem('google_access_token'); 
+                statusEl.innerHTML = `請點擊「清空重置」重新開始登入。錯誤: ${calendarEvents.message}`;
+                statusEl.style.backgroundColor = '#e74c3c';
+                throw new Error("Auth/API Failed");
+            }
+            statusEl.innerHTML = `🛑 GAS 程式碼執行失敗！錯誤: ${calendarEvents.message || '未知'}`;
+            statusEl.style.backgroundColor = '#e74c3c';
+            throw new Error("EXECUTION_FAILED");
+        }
+
+
+        // 授權成功
+        statusEl.innerHTML = '✅ 資料載入完成，已同步您的日曆事件。';
+        statusEl.style.backgroundColor = '#2ecc71';
+        
+        // 處理事件
+        let tempExternalBookings = {};
+        Object.keys(CONFIG).forEach(k => tempExternalBookings[k] = []);
+        calendarEvents.forEach(event => {
+            if (CONFIG[event.theme] && event.time) {
+                tempExternalBookings[event.theme].push(event.time);
+            }
+        });
+        return tempExternalBookings;
+
+
+    } catch (error) {
+        if (!["Auth/API Failed", "EXECUTION_FAILED"].includes(error.message)) {
+             statusEl.innerHTML = `<p style="color:white; font-weight:bold; margin: 0;">⚠️ 載入日曆資料失敗！</p><p style="margin: 5px 0 0 0; font-size: 0.9em; color:#ecf0f1;">錯誤: ${error.message || '未知錯誤'}</p>`;
+             statusEl.style.backgroundColor = '#95a5a6';
+        }
+        return {}; 
+    }
+}
+// ... [其餘 JS 函式保持不變]
+// ...
+// ... [其餘 JS 函式保持不變]
+// ...
+function render(shouldFetch = true) {
+    // ... (保持不變)
+}
+
+// 確保首次載入時初始化 Google 登入
+window.onload = gisInit;
+</script>
+</body>
+</html>
