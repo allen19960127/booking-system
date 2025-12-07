@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>謎失工作室 內部時間表 v14.1 (最終版)</title>
+<style>
+  /* 樣式區塊保持不變 */
+  body{font-family:"Microsoft JhengHei",sans-serif;background:#2c3e50;color:#fff;padding:20px;margin:0;}
+  h1{text-align:center;margin:30px 0 10px 0;font-size:2em;}
+  #status-message {
+    text-align: center; 
+    margin-bottom: 20px; 
+    font-weight: bold; 
+    padding: 10px;
+    border-radius: 8px;
+  }
+  #status-message a { font-weight: bold; }
+  
+  #auth-container { text-align: center; margin-bottom: 20px; padding: 10px; }
+  #user-status { margin: 5px 0; font-size: 1.1em; }
+  #google-signin-button { display: none; } /* 永遠隱藏手動按鈕，強制使用 prompt() */
+  
+  .container {display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;}
+  .theme{background:#34495e;padding:20px;border-radius:15px;width:100%;max-width:650px; transition: transform 0.2s; box-shadow: 0 5px 15px rgba(0,0,0,0.3);}
+  .theme h2{text-align:center;background:#2c3e50;padding:12px;border-radius:10px;margin:0 0 15px 0;}
+  .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:10px;}
+  
+  .slot{padding:12px 5px;text-align:center;border-radius:10px;font-weight:bold;font-size:0.9em;transition:all 0.15s;user-select:none; position: relative;}
+  
+  .available{background:#27ae60;cursor:pointer;border: 2px solid #2ecc71;}
+  .booked{background:#e74c3c;cursor:pointer;border: 2px solid #c0392b;}
+  .blocked{ background:#566573; color:#bdc3c7; cursor:not-allowed; opacity:0.6; font-size: 0.8em; line-height: 1.1; border: 2px solid #4a545e; }
+  .lobby-clash{background:#9b59b6; color: white;} 
+  .external-booked{background:#f39c12; color: white; cursor:not-allowed; border: 2px solid #e67e22; opacity: 1.0;}
+
+  .available-slots-area { margin-top: 20px; padding: 10px 0; border-top: 1px dashed #4a545e; display: flex; justify-content: space-between; align-items: flex-start; }
+  .available-slots-area strong { display: block; margin-bottom: 5px; color: #f1c40f; flex-shrink: 0; }
+  .copy-button { background: #3498db; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-size: 0.85em; transition: background 0.2s; flex-shrink: 0; margin-left: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+  .copy-button:hover {background: #2980b9;}
+
+  #controls {position:fixed;bottom:20px;right:20px;display: flex; gap: 10px; z-index:999;}
+  button {border:none; padding:15px 25px; border-radius:50px; font-weight:bold; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.2);}
+  #clear{background:#e67e22;color:white;}
+  #refresh{background:#3498db;color:white;}
+  
+  .legend {text-align: center; margin-bottom: 20px; font-size: 0.9em; display: flex; justify-content: center; gap: 15px;}
+  .dot {display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px;}
+</style>
+</head>
+<body>
+<h1>謎失工作室 內部時間表 v14.1 (最終版)</h1>
+
+<div id="auth-container">
+    <p id="user-status" style="color: #f1c40f;">請登入您的 Google 帳號以同步日曆。</p>
+    <div id="google-signin-button"></div> 
+</div>
+<div id="status-message" style="text-align: center; margin-bottom: 20px; font-weight: bold; color: #f1c40f;">載入中...</div>
+
+<div class="legend">
+  <div><span class="dot" style="background:#27ae60"></span>可預約</div>
+  <div><span class="dot" style="background:#e74c3c"></span>手動預約 (點擊取消)</div>
+  <div><span class="dot" style="background:#f39c12"></span>**日曆預約**</div>
+  <div><span class="dot" style="background:#566573"></span>時窗佔用</div>
+  <div><span class="dot" style="background:#9b59b6"></span>同館開場衝突</div>
+</div>
+
+<div class="container">
+  <div class="theme"><h2>301號房 (90分, 總時窗90分)</h2><div class="slots" id="s1"></div>
+    <div id="remaining-301號房" class="available-slots-area"></div>
+  </div>
+  <div class="theme"><h2>失物招領 (90分, 總時窗90分)</h2><div class="slots" id="s2"></div>
+    <div id="remaining-失物招領" class="available-slots-area"></div>
+  </div>
+  <div class="theme"><h2>藝樣的代價 (150分, 總時窗150分)</h2><div class="slots" id="s3"></div>
+    <div id="remaining-藝樣的代價" class="available-slots-area"></div>
+  </div>
+  <div class="theme"><h2>朱砂 (150分, 總時窗150分)</h2><div class="slots" id="s4"></div>
+    <div id="remaining-朱砂" class="available-slots-area"></div>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="refresh" onclick="location.reload()">重新整理</button>
+  <button id="clear" onclick="clearAll()">清空重置</button>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer data-is_client></script> 
+
+<script>
+// =================================================================
+// 🚨 設定區 🚨
+// 1. 您的 OAuth Client ID (已填入最新 ID)
+const CLIENT_ID = '633792240290-d9f0c3ou123879t35tihdniqdpi9gfgg.apps.googleusercontent.com';
+// 2. 您的最新 GAS 部署 URL (已填入)
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwrqS0A9Qwbleb7XebMCWGp2mYXC6Sbun327URwoHN1rrbvUy5C37Dq2gpypum9Pr---Q/exec';
+// 3. 請求日曆權限的範圍
+const SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+
+// 核心配置
+const CONFIG = {
+  "301號房":      { dur: 90,  group: "館A", interval: 15, block_before: 45, block_after: 45, id: "s1" },
+  "失物招領":    { dur: 90,  group: "館A", interval: 15, block_before: 45, block_after: 45, id: "s2" },
+  "藝樣的代價":  { dur: 150, group: "館B", interval: 30, block_before: 75, block_after: 75, id: "s3" }, 
+  "朱砂":        { dur: 150, group: "館B", interval: 30, block_before: 75, block_after: 75, id: "s4" }  
+};
+// =================================================================
+
+let localStorageKey = "mishi2025_v14";
+let localBookings = JSON.parse(localStorage.getItem(localStorageKey) || '{}');
+Object.keys(CONFIG).forEach(k => { if(!localBookings[k]) localBookings[k] = []; });
+
+let combinedBookings = JSON.parse(JSON.stringify(localBookings));
+let externalBookings = {};
+
+const tm = t => parseInt(t.split(":")[0]) * 60 + parseInt(t.split(":")[1]);
+const valToStr = v => `${String(Math.floor(v/60)).padStart(2,'0')}:${String(v%60).padStart(2,'0')}`;
+
+function generateTimes(interval) {
+  let res = [];
+  for(let t=630; t<=1260; t+=interval) res.push(valToStr(t)); // 10:30-21:00
+  return res;
+}
+
+// --- Google 登入邏輯 (已更新為 FedCM 標準) ---
+let gisInited = false;
+
+function gisInit() {
+    const userStatusEl = document.getElementById('user-status');
+    const signInButtonEl = document.getElementById('google-signin-button');
+
+    // 1. 如果已經登入過且 Token 有效，則直接嘗試載入
+    if (sessionStorage.getItem('google_access_token')) {
+        userStatusEl.innerHTML = '✅ 已登入 Google，正在同步日曆...';
+        signInButtonEl.style.display = 'none';
+        render(true);
+        return;
+    }
+
+    // 2. 初始化 Google 隱藏式登入設定，並啟用 FedCM 測試選項
+    window.google.accounts.id.initialize({
+        client_id: CLIENT_ID,
+        callback: handleSignInResponse,
+        scope: SCOPE,
+        use_fedcm_for_prompt: true // 啟用 FedCM 以解決跨來源問題
+    });
+    
+    // 3. 觸發隱藏式授權流程 (使用 prompt() 繞過 COOP 錯誤)
+    window.google.accounts.id.prompt((notification) => {
+        // 移除 renderButton 邏輯，強制依賴 prompt，避免 COOP 彈窗錯誤
+        if (notification.isNotDisplayed()) {
+            // 如果瀏覽器阻止了提示
+            userStatusEl.innerHTML = '⚠️ 請允許瀏覽器提示或點擊 **重新整理** 嘗試自動登入。';
+        } else if (notification.isSkippedMoment()) {
+            // 用戶已關閉提示，但尚未登入
+            userStatusEl.innerHTML = '請點擊瀏覽器右上角的 Google 帳號圖示再次嘗試登入。';
+        }
+        signInButtonEl.style.display = 'none'; // 永遠隱藏備用按鈕
+    });
+
+    gisInited = true;
+}
+
+
+// 處理登入響應 (取得憑證)
+function handleSignInResponse(resp) {
+    if (resp.access_token) {
+        // 成功取得 Access Token，存儲到 sessionStorage
+        sessionStorage.setItem('google_access_token', resp.access_token);
+        document.getElementById('user-status').innerHTML = '✅ 已登入 Google，正在同步日曆...';
+        render(true); // 重新載入排程表，這次會攜帶 Token
+    } else {
+        document.getElementById('user-status').innerHTML = '❌ 登入失敗或取消授權。';
+    }
+}
+
+// -------------------------------------------------------------------
+// 核心數據讀取 (已精簡)
+// -------------------------------------------------------------------
+
+async function fetchCalendarBookings(gasUrl) {
+    const statusEl = document.getElementById('status-message');
+    const token = sessionStorage.getItem('google_access_token');
+    
+    if (!token) {
+        statusEl.innerHTML = '⚠️ 尚未登入 Google。無法同步日曆。';
+        statusEl.style.backgroundColor = '#566573';
+        return {}; 
+    }
+    
+    statusEl.innerHTML = '正在使用您的憑證向日曆伺服器請求資料...';
+
+    try {
+        const fetchUrl = `${gasUrl}?token=${token}`; 
+        const response = await fetch(fetchUrl);
+        
+        if (!response.ok) { throw new Error(`網路錯誤 ${response.status}`); }
+        
+        const calendarEvents = await response.json();
+        
+        // 檢查 GAS 返回的錯誤 (如 Token 失效)
+        if (calendarEvents.error) {
+            if (calendarEvents.error === "TOKEN_INVALID" || calendarEvents.error === "API_ERROR") {
+                document.getElementById('user-status').innerHTML = '❌ 登入憑證無效或過期，請重新登入！';
+                sessionStorage.removeItem('google_access_token'); // 清除 Token
+                statusEl.innerHTML = '請點擊上方按鈕重新登入。';
+                statusEl.style.backgroundColor = '#543030';
+                throw new Error("Token/Auth Failed");
+            }
+            statusEl.innerHTML = `🛑 GAS 程式碼執行失敗！錯誤: ${calendarEvents.message || '未知'}`;
+            statusEl.style.backgroundColor = '#543030';
+            throw new Error("EXECUTION_FAILED");
+        }
+
+
+        // 授權成功
+        statusEl.innerHTML = '✅ 資料載入完成，已同步您的日曆事件。';
+        statusEl.style.backgroundColor = '#1e8449';
+        statusEl.style.color = 'white';
+        
+        // 處理事件
+        let tempExternalBookings = {};
+        Object.keys(CONFIG).forEach(k => tempExternalBookings[k] = []);
+        calendarEvents.forEach(event => {
+            if (CONFIG[event.theme] && event.time) {
+                tempExternalBookings[event.theme].push(event.time);
+            }
+        });
+        return tempExternalBookings;
+
+
+    } catch (error) {
+        if (!["Token/Auth Failed", "EXECUTION_FAILED"].includes(error.message)) {
+             statusEl.innerHTML = `<p style="color:#f39c12; font-weight:bold; margin: 0;">⚠️ 載入日曆資料失敗！</p><p style="margin: 5px 0 0 0; font-size: 0.9em; color:#ecf0f1;">錯誤: ${error.message || '未知錯誤'}</p>`;
+             statusEl.style.backgroundColor = '#566573';
+             statusEl.style.color = 'white';
+        }
+        return {}; 
+    }
+}
+
+// -------------------------------------------------------------------
+// 狀態檢查、切換、繪製邏輯 (保持不變)
+// -------------------------------------------------------------------
+
+function getStatus(theme, tVal) {
+  const conf = CONFIG[theme];
+  const tStr = valToStr(tVal);
+  if (externalBookings[theme] && externalBookings[theme].includes(tStr)) return 'external-booked';
+  if (localBookings[theme].includes(tStr)) return 'booked';
+  const mate = Object.keys(CONFIG).find(k => CONFIG[k].group === conf.group && k !== theme);
+  if (combinedBookings[mate] && combinedBookings[mate].includes(tStr)) return 'lobby-clash';
+  for (let startStr of combinedBookings[theme]) {
+    let s = tm(startStr);
+    let s_block = s - conf.block_before;
+    let e_block = s + conf.block_after; 
+    if (tVal >= s_block && tVal < e_block) return 'blocked';
+  }
+  return 'available';
+}
+
+function checkConflict(theme, tVal) {
+    const conf = CONFIG[theme];
+    const s_new_buffer = tVal - conf.block_before;
+    const e_new_buffer = tVal + conf.block_after;
+    return combinedBookings[theme].some(existStr => {
+      const s_exist = tm(existStr);
+      const s_exist_buffer = s_exist - conf.block_before;
+      const e_exist_buffer = s_exist + conf.block_after;
+      if (s_new_buffer < e_exist_buffer && e_new_buffer > s_exist_buffer) {
+        return true;
+      }
+      return false;
+    });
+}
+
+function toggle(theme, time) {
+  const tVal = tm(time);
+  if (externalBookings[theme] && externalBookings[theme].includes(time)) {
+      console.warn("此為日曆預約，請至 Google 日曆上修改或刪除。");
+      return; 
+  }
+  const idx = localBookings[theme].indexOf(time);
+  if (idx > -1) {
+    localBookings[theme].splice(idx,1);
+  } else {
+    if (getStatus(theme, tVal) !== 'available') return; 
+    if (checkConflict(theme, tVal)) return;
+    localBookings[theme].push(time);
+  }
+  localStorage.setItem(localStorageKey, JSON.stringify(localBookings));
+  render(false); 
+}
+
+function clearAll() {
+    Object.keys(localBookings).forEach(key => localBookings[key] = []);
+    localStorage.setItem(localStorageKey, JSON.stringify(localBookings));
+    
+    // 同時清除 sessionStorage 中的 token，強制重新登入
+    sessionStorage.removeItem('google_access_token'); 
+    location.reload(); 
+}
+
+function copyAvailableSlots(theme) {
+  const element = document.getElementById(`remaining-${theme}`);
+  const slotsText = element.querySelector('.slot-text').innerText;
+  const textToCopy = `${theme}剩餘場次：${slotsText}`;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(textToCopy)
+      .then(() => {
+        const button = element.querySelector('.copy-button');
+        button.innerText = '已複製！';
+        setTimeout(() => button.innerText = '一鍵複製', 1500);
+      })
+      .catch(err => {
+        const button = element.querySelector('.copy-button');
+        button.innerText = '複製失敗';
+      });
+  } else {
+    const button = element.querySelector('.copy-button');
+    button.innerText = '複製失敗 (請手動)';
+  }
+}
+
+async function render(shouldFetch = true) {
+    if (!gisInited) { gisInit(); }
+
+    let fetchError = false;
+    if (shouldFetch) {
+        const fetchedEvents = await fetchCalendarBookings(GAS_URL);
+        externalBookings = fetchedEvents;
+        const statusEl = document.getElementById('status-message');
+        if (statusEl.innerHTML.includes('❌') || statusEl.innerHTML.includes('🛑') || statusEl.innerHTML.includes('⚠️')) {
+            fetchError = true;
+        }
+    }
+    
+    combinedBookings = JSON.parse(JSON.stringify(localBookings));
+    Object.keys(CONFIG).forEach(theme => {
+        if (externalBookings[theme]) {
+            externalBookings[theme].forEach(time => {
+                if (!combinedBookings[theme].includes(time)) {
+                    combinedBookings[theme].push(time);
+                }
+            });
+        }
+        if (!combinedBookings[theme]) combinedBookings[theme] = []; 
+    });
+    
+    if (fetchError && shouldFetch) {
+        Object.keys(CONFIG).forEach(theme => {
+            document.getElementById(CONFIG[theme].id).innerHTML = `<div style="color:#e74c3c; text-align:center; padding: 20px;">請先解決上方提示的錯誤或登入。</div>`;
+            document.getElementById(`remaining-${theme}`).innerHTML = `<strong>剩餘場次：</strong><span class="slot-text" style="color:#e74c3c;">無法同步</span>`;
+        });
+        return;
+    }
+
+    const allTimes = {};
+    
+    Object.keys(CONFIG).forEach(theme => {
+      const conf = CONFIG[theme];
+      const el = document.getElementById(conf.id);
+      const times = generateTimes(conf.interval);
+      let availableTimes = [];
+
+      el.innerHTML = times.map(t => {
+        const tVal = tm(t);
+        const s = getStatus(theme, tVal);
+        let label = t;
+        let cls = s;
+        let onClick = `onclick="toggle('${theme}','${t}')"`;
+        
+        if (s === 'booked') { } 
+        else if (s === 'external-booked') {
+          cls = 'external-booked'; label = t + ' (日曆)'; onClick = '';
+        }
+        else if (s === 'lobby-clash') { 
+          cls = 'lobby-clash'; label = '開場衝突'; onClick = '';
+        }
+        else if (s === 'blocked') { 
+          const totalMinutes = conf.block_before + conf.block_after;
+          label = `佔用 (${totalMinutes}分)`; onClick = '';
+        } else {
+          if (checkConflict(theme, tVal)) {
+              cls = 'blocked'; label = '排程衝突'; onClick = '';
+          } else {
+              availableTimes.push(t);
+          }
+        }
+        return `<div class="slot ${cls}" ${onClick}>${label}</div>`;
+      }).join('');
+      allTimes[theme] = availableTimes;
+    });
+
+    Object.keys(CONFIG).forEach(theme => {
+      const areaEl = document.getElementById(`remaining-${theme}`);
+      const availableSlots = allTimes[theme] || [];
+      const slotsText = availableSlots.join(', ') || '本日無剩餘場次';
+      areaEl.innerHTML = `
+        <div style="display: flex; align-items: flex-start; width: 100%;">
+            <strong>剩餘場次：</strong>
+            <div class="slot-text-container">
+                <span class="slot-text">${slotsText}</span>
+            </div>
+            <button class="copy-button" onclick="copyAvailableSlots('${theme}')">一鍵複製</button>
+        </div>
+      `;
+    });
+}
+
+// 確保首次載入時初始化 Google 登入
+window.onload = gisInit;
+</script>
+</body>
+</html>
