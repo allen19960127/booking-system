@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>謎失工作室 排程同步系統（最終版 - 複製格式修正）</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;500;700&display=swap" rel="stylesheet">
+<style>
+    body { font-family: 'Noto Sans TC', sans-serif; background:#f0f4f8; color:#2c3e50; padding:20px; margin:0; line-height:1.6; }
+    h1 { text-align:center; margin:20px 0 10px; font-size:2.2em; color:#34495e; }
+    #auth-container { text-align:center; margin-bottom:25px; padding:15px; background:#fff; border-radius:12px; box-shadow:0 4px 8px rgba(0,0,0,0.05); }
+    #user-status { margin:5px 0 15px; font-size:1.1em; color:#2980b9; font-weight:500; }
+    #status-message { text-align:center; margin-bottom:20px; padding:12px; border-radius:8px; color:white; font-weight:bold; }
+    .container { display:flex; flex-wrap:wrap; justify-content:center; gap:25px; }
+    .theme { background:#fff; padding:20px; border-radius:12px; width:100%; max-width:650px; box-shadow:0 6px 15px rgba(0,0,0,0.1); border-top:5px solid #3498db; }
+    .theme h2 { text-align:center; background:#ecf0f1; padding:12px; border-radius:8px; margin:0 0 20px; font-size:1.5em; color:#34495e; }
+    .slots { display:grid; grid-template-columns:repeat(auto-fill,minmax(80px,1fr)); gap:8px; }
+    .slot { padding:10px 5px; text-align:center; border-radius:6px; font-weight:500; font-size:0.9em; user-select:none; line-height:1.2; transition:all 0.15s; cursor:pointer; }
+    .available { background:#2ecc71; color:white; }
+    .available:hover { background:#27ae60; transform:translateY(-1px); }
+    .booked { background:#e74c3c; color:white; }
+    .blocked { background:#bdc3c7; color:#7f8c8d; cursor:not-allowed; opacity:0.8; }
+    .lobby-clash { background:#9b59b6; color:white; cursor:not-allowed; }
+    .external-booked { background:#f39c12; color:white; font-weight:700; cursor:not-allowed; }
+    .past-time { background:#a0a0a0; color:white; cursor:not-allowed; opacity:0.6; } /* 已過時間的樣式 */
+    .hidden-past { display: none !important; } /* 隱藏已過時間的樣式 */
+    
+    .available-slots-area { margin-top:25px; padding:15px; background:#f8f9fa; border-radius:8px; }
+    .available-slots-area strong { display:block; margin-bottom:8px; color:#e67e22; font-weight:700; }
+    .copy-button { background:#3498db; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer; margin-top:10px; }
+    .copy-button:hover { background:#2980b9; }
+    
+    #controls { position:fixed; bottom:20px; right:20px; display:flex; gap:10px; z-index:999; }
+    #controls button { padding:12px 20px; border:none; border-radius:8px; color:white; font-weight:bold; cursor:pointer; box-shadow:0 4px 8px rgba(0,0,0,0.2); }
+    #refresh { background:#3498db; }
+    #copy-all { background:#8e44ad; }
+    #copy-all:hover { background:#6d3588; }
+    #clear { background:#e74c3c; }
+    #override { background:#ff9f43; } /* 新增 Override 按鈕樣式 (橘色系) */
+    #override.active { background:#c0392b; } /* Override 啟用時 (深紅色) */
+
+    #filter-controls { text-align:center; margin:10px 0 20px; font-weight:500; font-size:1.1em; color:#34495e; }
+    #filter-controls input { margin-right:8px; transform:scale(1.2); }
+</style>
+</head>
+<body>
+<h1>謎失工作室 排程同步系統</h1>
+
+<div id="auth-container">
+    <p id="user-status">載入中...</p>
+    <div id="google-signin-button"></div>
+</div>
+<div id="status-message" style="background:#bdc3c7;">載入中...</div>
+
+<div id="filter-controls">
+    <label>
+        <input type="checkbox" id="hide-past-toggle" onclick="toggleHidePastSlots()" checked> 隱藏已過時間
+    </label>
+</div>
+
+<div class="legend">
+    <div><span class="dot" style="background:#2ecc71"></span>可預約</div>
+    <div><span class="dot" style="background:#e74c3c"></span>手動預約</div>
+    <div><span class="dot" style="background:#f39c12"></span>日曆已訂</div>
+    <div><span class="dot" style="background:#a0a0a0"></span>已過時間</div>
+    <div><span class="dot" style="background:#bdc3c7"></span>同主題時窗佔用 (緩衝區)</div>
+    <div><span class="dot" style="background:#9b59b6"></span>同館衝突 (開始時間互斥)</div>
+</div>
+
+<div class="container">
+    <div class="theme"><h2>301號房 (90分)</h2><div class="slots" id="s1"></div><div id="remaining-301號房" class="available-slots-area"></div></div>
+    <div class="theme"><h2>失物招領 (90分)</h2><div class="slots" id="s2"></div><div id="remaining-失物招領" class="available-slots-area"></div></div>
+    <div class="theme"><h2>藝樣的代價 (150分)</h2><div class="slots" id="s3"></div><div id="remaining-藝樣的代價" class="available-slots-area"></div></div>
+    <div class="theme"><h2>朱砂 (150分)</h2><div class="slots" id="s4"></div><div id="remaining-朱砂" class="available-slots-area"></div></div>
+</div>
+
+<div id="controls">
+    <button id="override" onclick="toggleOverrideMode()">開放模式</button>
+    <button id="refresh" onclick="location.reload()">重新整理</button>
+    <button id="copy-all" onclick="copyAllAvailableSlots()">全部複製</button>
+    <button id="clear" onclick="clearAll()">登出重製</button>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+// ================== 設定區 ==================
+const CLIENT_ID = '668108664338-d1fa84nmbpq0leo5tavf9n0cahg2g1ge.apps.googleusercontent.com';
+const SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+// =============================================
+
+let localStorageKey = "mishi2025_final";
+let localBookings = JSON.parse(localStorage.getItem(localStorageKey) || '{}');
+let externalBookings = {};
+let hidePastSlots = true;
+let overrideMode = false;
+
+// 核心配置：場館分組和緩衝時間 (新增 store 屬性)
+const CONFIG = {
+    "301號房":      { dur: 90,  group: "館A", interval: 15, block_before: 45, block_after: 45, id: "s1", store: "山子頂店" },
+    "失物招領":    { dur: 90,  group: "館A", interval: 15, block_before: 45, block_after: 45, id: "s2", store: "山子頂店" },
+    "藝樣的代價": { dur: 150, group: "館B", interval: 30, block_before: 75, block_after: 75, id: "s3", store: "中壢店" },
+    "朱砂":        { dur: 150, group: "館B", interval: 30, block_before: 75, block_after: 75, id: "s4", store: "中壢店" }
+};
+
+// 工具函式
+const tm = t => parseInt(t.split(":")[0])*60 + parseInt(t.split(":")[1]);
+const valToStr = v => `${String(Math.floor(v/60)).padStart(2,'0')}:${String(v%60).padStart(2,'0')}`;
+const getCurrentMinutes = () => new Date().getHours() * 60 + new Date().getMinutes();
+
+function generateTimes(interval) {
+    let res = [];
+    for(let t=630; t<=1260; t+=interval) res.push(valToStr(t)); // 10:30-21:00
+    return res;
+}
+
+// --- Google Identity Service & Calendar API 函式 (與前版相同) ---
+
+function initGoogleSignIn() {
+    google.accounts.id.initialize({
+        client_id: CLIENT_ID,
+        callback: handleCredentialResponse,
+        auto_select: false
+    });
+    google.accounts.id.renderButton(document.getElementById("google-signin-button"), { theme: "outline", size: "large" });
+    document.getElementById('user-status').innerHTML = '請點下方按鈕登入 Google 以同步日曆';
+}
+
+function handleCredentialResponse(response) {
+    google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPE,
+        callback: (resp) => {
+            if (resp.error) { alert("登入失敗：" + resp.error); return; }
+            sessionStorage.setItem('google_access_token', resp.access_token);
+            document.getElementById('user-status').innerHTML = '已登入，正在讀取日曆...';
+            document.getElementById('google-signin-button').style.display = 'none';
+            render(true);
+        }
+    }).requestAccessToken();
+}
+
+async function fetchCalendarBookings() {
+    const token = sessionStorage.getItem('google_access_token');
+    const statusEl = document.getElementById('status-message');
+    if (!token) return {};
+
+    statusEl.innerHTML = '正在讀取您的 Google 日曆...'; statusEl.style.backgroundColor = '#3498db';
+
+    try {
+        const today = new Date();
+        const timeMin = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+        const timeMax = new Date(today.getFullYear(), today.getMonth(), today.getDate()+1).toISOString();
+
+        const res = await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`,
+            { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (!res.ok) throw new Error(`API ${res.status}`);
+
+        const data = await res.json();
+        statusEl.innerHTML = '日曆同步完成！'; statusEl.style.backgroundColor = '#2ecc71';
+
+        const ext = {};
+        Object.keys(CONFIG).forEach(k => ext[k] = []);
+
+        data.items.forEach(item => {
+            if (item.start?.dateTime && item.summary) {
+                const start = new Date(item.start.dateTime);
+                const timeStr = `${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}`;
+                
+                Object.keys(CONFIG).forEach(theme => {
+                    if (item.summary.includes(theme)) {
+                        ext[theme].push(timeStr);
+                    }
+                });
+            }
+        });
+        return ext;
+    } catch (err) {
+        statusEl.innerHTML = `日曆讀取失敗：${err.message}`; statusEl.style.backgroundColor = '#e74c3c';
+        console.error(err);
+        return {};
+    }
+}
+
+
+// --- 時段狀態計算 (與前版相同) ---
+function calculateSlotStatus(theme, timeStr) {
+    
+    const cfg = CONFIG[theme];
+    const cur = tm(timeStr);
+    const dur = cfg.dur;
+
+    if (localBookings[theme]?.includes(timeStr)) return 'booked';
+
+    let isBlocked = false;
+    let isLobbyClash = false;
+    
+    const allBookings = {};
+    Object.keys(CONFIG).forEach(k => {
+        allBookings[k] = localBookings[k] || [];
+        if (!overrideMode) {
+            allBookings[k] = allBookings[k].concat(externalBookings[k] || []);
+        }
+    });
+
+    if (!overrideMode) {
+        if (externalBookings[theme]?.includes(timeStr)) return 'external-booked';
+    }
+
+
+    Object.keys(CONFIG).forEach(otherTheme => {
+        const otherConfig = CONFIG[otherTheme];
+        
+        allBookings[otherTheme].forEach(bookedTimeStr => {
+            const bookedTime = tm(bookedTimeStr);
+            
+            if (cfg.group === otherConfig.group && theme !== otherTheme) {
+                if (cur === bookedTime) {
+                    isLobbyClash = true;
+                }
+            }
+
+            if (theme === otherTheme) {
+                const lockStartTime = bookedTime - otherConfig.block_before;
+                const lockEndTime = bookedTime + otherConfig.dur + otherConfig.block_after;
+
+                const slotStartTime = cur;
+                const slotEndTime = cur + dur;
+                
+                const overlap = Math.max(0, Math.min(slotEndTime, lockEndTime) - Math.max(slotStartTime, lockStartTime));
+
+                if (overlap > 0) {
+                    isBlocked = true;
+                }
+            }
+        });
+    });
+
+    if (isLobbyClash) return 'lobby-clash';
+    if (isBlocked) return 'blocked';
+    
+    return 'available';
+}
+
+
+// --- 視覺渲染與操作 (與前版相同) ---
+
+function toggleOverrideMode() {
+    const button = document.getElementById('override');
+    overrideMode = !overrideMode;
+    
+    if (overrideMode) {
+        button.classList.add('active');
+        button.innerHTML = 'Override 模式 (已啟用)';
+        document.getElementById('status-message').innerHTML = '⚠️ **已啟用開放模式**：忽略日曆預約與已過時間，保留館內衝突。';
+        document.getElementById('status-message').style.backgroundColor = '#c0392b';
+    } else {
+        button.classList.remove('active');
+        button.innerHTML = '開放模式';
+        if (sessionStorage.getItem('google_access_token')) {
+             document.getElementById('status-message').innerHTML = '日曆同步完成！';
+             document.getElementById('status-message').style.backgroundColor = '#2ecc71';
+        } else {
+             document.getElementById('status-message').innerHTML = '尚未登入日曆，資料可能不完整。';
+             document.getElementById('status-message').style.backgroundColor = '#bdc3c7';
+        }
+    }
+    renderSlots();
+}
+
+function toggleHidePastSlots() {
+    hidePastSlots = document.getElementById('hide-past-toggle').checked;
+    renderSlots();
+}
+
+function toggleSlot(theme, time, el) {
+    if (el.classList.contains('blocked') || el.classList.contains('lobby-clash') || el.classList.contains('past-time')) return; 
+
+    if (!overrideMode && el.classList.contains('external-booked')) return;
+    
+    if (el.classList.contains('booked')) {
+        localBookings[theme] = localBookings[theme].filter(t => t !== time);
+        el.classList.remove('booked'); 
+        el.classList.add(calculateSlotStatus(theme, time));
+    } else {
+        localBookings[theme].push(time);
+        el.classList.remove('available', 'blocked', 'past-time', 'external-booked', 'lobby-clash'); 
+        el.classList.add('booked');
+    }
+    localStorage.setItem(localStorageKey, JSON.stringify(localBookings));
+    renderSlots();
+    updateRemainingSlotsDisplay();
+}
+
+function renderSlots() {
+    const currentMinutes = getCurrentMinutes();
+
+    Object.keys(CONFIG).forEach(theme => {
+        const {id, interval} = CONFIG[theme];
+        const times = generateTimes(interval);
+        let html = '';
+        times.forEach(t => {
+            const slotMinutes = tm(t);
+            const isPast = slotMinutes < currentMinutes;
+
+            let status = calculateSlotStatus(theme, t);
+            let label = t;
+            let slotClass = status;
+            
+            if (!overrideMode && isPast) {
+                slotClass = 'past-time';
+                if (hidePastSlots) {
+                    slotClass += ' hidden-past';
+                }
+            }
+            else if (overrideMode && status === 'available') {
+                 label = t;
+            }
+            else {
+                if (status === 'blocked') label += '<br>(佔用)';
+                else if (status === 'lobby-clash') label += '<br>(衝突)';
+                else if (status === 'external-booked') label += '<br>(日曆已訂)';
+            }
+            
+            html += `<div class="slot ${slotClass}" onclick="toggleSlot('${theme}','${t}',this)">${label}</div>`;
+        });
+        document.getElementById(id).innerHTML = html;
+    });
+    updateRemainingSlotsDisplay();
+}
+
+// --- 修正 updateRemainingSlotsDisplay 顯示格式 ---
+function updateRemainingSlotsDisplay() {
+    const currentMinutes = getCurrentMinutes();
+    const isOverride = overrideMode;
+
+    Object.keys(CONFIG).forEach(theme => {
+        const area = document.getElementById(`remaining-${theme}`);
+        const times = generateTimes(CONFIG[theme].interval);
+        
+        const avail = times.filter(t => {
+            const slotMinutes = tm(t);
+            const isPast = slotMinutes < currentMinutes;
+            const status = calculateSlotStatus(theme, t);
+            
+            if (isOverride) {
+                return status !== 'booked' && status !== 'blocked' && status !== 'lobby-clash';
+            } else {
+                return !isPast && status === 'available';
+            }
+        });
+
+        const text = avail.length ? avail.join(', ') : (isOverride ? '所有可開時段皆已被預約/衝突' : '今日無空檔');
+        
+        // 🌟 修正單欄複製的格式，移除分鐘數
+        const full = `${theme}: ${avail.join(', ')}`;
+
+        area.innerHTML = `<strong>${theme} 可預約 (${avail.length}檔)${isOverride ? ' [開放模式]' : ''}：</strong>
+            <div style="margin:8px 0; word-break:break-all;">${text.length>200 ? avail.slice(0,15).join(', ')+'...' : text}</div>
+            <button class="copy-button" onclick="navigator.clipboard.writeText('${full}').then(()=>alert('已複製 ${theme} 可預約時間！'))">複製本欄</button>`;
+    });
+}
+
+// --- 修正 copyAllAvailableSlots 複製格式 ---
+function copyAllAvailableSlots() {
+    const currentMinutes = getCurrentMinutes();
+    const isOverride = overrideMode;
+    
+    let allSlotsData = {}; // 用來儲存 {店名: {主題: [時段, ...]}}
+
+    // 1. 整理所有主題的剩餘場次
+    Object.keys(CONFIG).forEach(theme => {
+        const { store, interval } = CONFIG[theme];
+        const times = generateTimes(interval);
+        
+        const avail = times.filter(t => {
+            const slotMinutes = tm(t);
+            const isPast = slotMinutes < currentMinutes;
+            const status = calculateSlotStatus(theme, t);
+            
+            if (isOverride) {
+                return status !== 'booked' && status !== 'blocked' && status !== 'lobby-clash';
+            } else {
+                return !isPast && status === 'available';
+            }
+        });
+
+        if (!allSlotsData[store]) {
+            allSlotsData[store] = {};
+        }
+        allSlotsData[store][theme] = avail;
+    });
+
+    let outputText = "今日剩餘場次\n\n";
+    let hasAvailable = false;
+
+    // 2. 按照店名和主題順序輸出
+    // 預期順序：中壢店 (藝樣的代價, 朱砂), 山子頂店 (301號房, 失物招領)
+    const storeOrder = ["中壢店", "山子頂店"];
+    const themeOrder = Object.keys(CONFIG);
+
+    storeOrder.forEach(storeName => {
+        outputText += `${storeName}\n`;
+        
+        // 過濾出屬於該店的主題，並依照 CONFIG 中的順序排序 (或保持原樣)
+        themeOrder.forEach(theme => {
+             if (CONFIG[theme].store === storeName) {
+                const avail = allSlotsData[storeName][theme] || [];
+                const timeStr = avail.length ? avail.join(', ') : '今日無空檔';
+
+                // 🌟 輸出格式：主題名稱: 時段列表
+                outputText += `${theme}: ${timeStr}\n`;
+                if (avail.length > 0) hasAvailable = true;
+             }
+        });
+        outputText += "\n";
+    });
+
+    // 3. 處理模式提示
+    const modeAlert = isOverride ? `⚠️ 注意：複製的是開放模式下【未被內部衝突鎖定】的所有時段。\n` : ``;
+    outputText = modeAlert + outputText.trim();
+
+
+    navigator.clipboard.writeText(outputText).then(() => {
+        alert('所有主題的剩餘可預約時間已複製到剪貼簿！');
+    }).catch(err => {
+        console.error('複製失敗:', err);
+        alert('複製失敗，請手動複製。');
+    });
+}
+
+async function render(doFetch = true) {
+    if (doFetch) externalBookings = await fetchCalendarBookings();
+    renderSlots();
+}
+
+function clearAll() {
+    sessionStorage.clear();
+    localStorage.removeItem(localStorageKey);
+    location.reload();
+}
+
+// 初始載入
+window.onload = () => {
+    Object.keys(CONFIG).forEach(k => { if (!localBookings[k]) localBookings[k] = []; });
+    initGoogleSignIn();
+    
+    if (sessionStorage.getItem('google_access_token')) {
+        document.getElementById('user-status').innerHTML = '已登入，讀取日曆中...';
+        document.getElementById('google-signin-button').style.display = 'none';
+        render(true);
+    } else {
+        document.getElementById('status-message').innerHTML = '尚未登入日曆，資料可能不完整。';
+        document.getElementById('status-message').style.backgroundColor = '#bdc3c7';
+        render(false); 
+    }
+    
+    const overrideButton = document.getElementById('override');
+    if (overrideMode) {
+        overrideButton.classList.add('active');
+        overrideButton.innerHTML = 'Override 模式 (已啟用)';
+        document.getElementById('status-message').innerHTML = '⚠️ **已啟用開放模式**：忽略日曆預約與已過時間，保留館內衝突。';
+        document.getElementById('status-message').style.backgroundColor = '#c0392b';
+    }
+};
+</script>
+</body>
+</html>
